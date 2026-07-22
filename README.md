@@ -234,7 +234,7 @@ This project is open source and available under the MIT License.
 
 ## 🔗 Links
 
-- **Repository**: [github.com/Shivampal7405/Multi-LLM_JUDGE](https://github.com/KK-is-Coding/multi-llm_judge.git)
+- **Repository**: [https://github.com/KK-is-Coding/multi-llm_judge](https://github.com/KK-is-Coding/multi-llm_judge.git)
 
 ## 📧 Support
 
