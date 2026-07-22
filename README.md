@@ -150,11 +150,11 @@ Multi-LLM_JUDGE/
 
 ### Customize LLM Models
 
-Edit `router/llm_generators.py` to change models:
+Edit `router/llm_generators.py` to change models to the their latest versions:
 
 ```python
 # Gemini
-model="gemini-2.5-flash"
+model="gemini-flash-latest"
 
 # ChatGPT
 model="gpt-4o-mini"
