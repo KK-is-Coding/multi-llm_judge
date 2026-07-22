@@ -136,13 +136,26 @@ async def classify_query(user_query: str, chat_history_str: str = "", last_inten
     try:
         # Gemini is better at reasoning about context
         response = await generate_gemini(prompt, CLASSIFICATION_SYSTEM_PROMPT)
+
+        if not response or not response.strip():
+            raise ValueError("Empty response from Gemini")
+        if response.startswith("Error"):
+            # generate_gemini itself failed (missing key, API error, etc.)
+            raise RuntimeError(response)
+ 
         clean_response = response.replace("```json", "").replace("```", "").strip()
         data = json.loads(clean_response)
+ 
+        # Ensure the result always has the fields downstream code relies on,
+        # even if the model's JSON is missing one.
+        data.setdefault("query_type", "new_question")
+        data.setdefault("route_to", "generators")
+        data.setdefault("reasoning", "No reasoning provided by classifier.")
         return data
     except Exception as e:
         print(f"[Intent] Classification failed: {e}")
         # Default fallback
-        return {"query_type": "new_question", "route_to": "generators"}
+        return {"query_type": "new_question", "route_to": "generators","reasoning": f"Fallback used due to classification error: {e}"}
 
 async def extract_intent_signature(user_query: str) -> dict:
     """

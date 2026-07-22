@@ -1,4 +1,3 @@
-
 import os
 import asyncio
 import aiohttp
@@ -77,12 +76,46 @@ async def generate_gemini(prompt: str, system_prompt: str = SYSTEM_PROMPT) -> st
     try:
         config = types.GenerateContentConfig(system_instruction=system_prompt) if system_prompt else None
         response = await gemini_client.aio.models.generate_content(
-            model="gemini-2.5-flash",
+            model="gemini-flash-latest",
             contents=prompt,
             config=config
         )
-        return response.text
+
+        text = response.text
+
+        if text and text.strip():
+            return text
+
+        # response.text was None/empty - dig into WHY so it's not a silent
+        # "Expecting value: line 1 column 1 (char 0)" downstream.
+        reason_parts = []
+
+        prompt_feedback = getattr(response, "prompt_feedback", None)
+        if prompt_feedback is not None:
+            block_reason = getattr(prompt_feedback, "block_reason", None)
+            if block_reason:
+                reason_parts.append(f"prompt blocked ({block_reason})")
+
+        candidates = getattr(response, "candidates", None) or []
+        for i, cand in enumerate(candidates):
+            finish_reason = getattr(cand, "finish_reason", None)
+            safety_ratings = getattr(cand, "safety_ratings", None)
+            detail = f"candidate[{i}] finish_reason={finish_reason}"
+            if safety_ratings:
+                flagged = [r for r in safety_ratings if getattr(r, "blocked", False)]
+                if flagged:
+                    detail += f" blocked_categories={[getattr(r, 'category', '?') for r in flagged]}"
+            reason_parts.append(detail)
+
+        if not reason_parts:
+            reason_parts.append("no candidates returned and no prompt_feedback available")
+
+        diagnostic = "; ".join(reason_parts)
+        print(f"[generate_gemini] Empty text response. Diagnostics: {diagnostic}")
+        return f"Error Gemini: empty response ({diagnostic})"
+
     except Exception as e:
+        print(f"[generate_gemini] Exception: {type(e).__name__}: {e}")
         return f"Error Gemini: {str(e)}"
 
 async def generate_chatgpt(prompt: str, system_prompt: str = SYSTEM_PROMPT) -> str:
