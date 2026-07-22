@@ -17,6 +17,23 @@ entity_trace = EntityTraceMemory() # NEW: Trace Memory (Corrected Instantiation)
 
 IMPLICIT_TRIGGERS = {"jo", "us", "usi", "that", "it", "him", "her", "that movie", "that film", "woh"}
 
+# Markers that indicate a response is a failure/error, not a real answer.
+# Used to stop bad results from being cached or served from memory.
+_ERROR_MARKERS = (
+    "error during evaluation",
+    "error gemini",
+    "error chatgpt",
+    "error groq",
+    "error ollama",
+    "error:",
+)
+
+def _looks_like_error(text: str) -> bool:
+    if not text or not text.strip():
+        return True
+    lowered = text.strip().lower()
+    return any(lowered.startswith(marker) or marker in lowered[:60] for marker in _ERROR_MARKERS)
+
 async def process_query(user_query: str):
     global last_system_response, last_intent_sig, last_intent_data
     
@@ -78,12 +95,19 @@ async def process_query(user_query: str):
     
     # 3. Check Memory (Only if same domain context if we wanted to be strict, but intent key implies uniqueness)
     cached_record = memory.get_intent_answer(current_intent_sig)
-    
+
+    if cached_record:
+        # Handle new vs legacy schema key
+        cached_answer_text = cached_record.get("approved_answer") or cached_record.get("answer")
+
+        if _looks_like_error(cached_answer_text):
+            print("[Router] Cached record is a stale error response - ignoring cache, regenerating instead.")
+            cached_record = None
+
     if cached_record:
         print("[Router] Intent found in memory! Routing to Judge for final delivery.")
-        # Handle new vs legacy schema key
         answer_text = cached_record.get("approved_answer") or cached_record.get("answer")
-        
+
         final_response = await judge.judge_from_memory(user_query, answer_text)
         print(f"\n[Result] (From Memory): {final_response}")
         last_system_response = final_response
@@ -114,20 +138,27 @@ CURRENT QUERY:
         while True:
             print(f"\n[Proposed Answer]: {final_answer}")
             print(f"[Domain]: {current_domain}")
-            
+
+            if _looks_like_error(final_answer):
+                print("[Router] WARNING: This looks like a failed/error response, not a real answer.")
+                print("It will NOT be saved to memory even if you press Enter. Type feedback to retry, or Enter to just move on without saving.")
+
             print("Press [ENTER] to approve, or type your correction/feedback below:")
             user_feedback = input(">>> ").strip()
             
             if not user_feedback:
                 print("[Router] Feedback approved.")
-                # Store in Memory (New Schema)
-                memory.save_intent_answer(
-                    intent_data=intent_data,
-                    answer=final_answer,
-                    generated_by_models=generator_models,
-                    confidence=0.95 # Validated by human
-                )
-                print("[Router] Answer saved to memory.")
+                # Store in Memory (New Schema) - but never persist an error response
+                if _looks_like_error(final_answer):
+                    print("[Router] Skipped saving to memory (response looked like an error).")
+                else:
+                    memory.save_intent_answer(
+                        intent_data=intent_data,
+                        answer=final_answer,
+                        generated_by_models=generator_models,
+                        confidence=0.95 # Validated by human
+                    )
+                    print("[Router] Answer saved to memory.")
                 
                 # Update Context History
                 context_manager.add_turn("user", user_query)
