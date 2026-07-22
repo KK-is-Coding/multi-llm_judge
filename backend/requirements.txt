@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+google-genai
+openai
+groq
+requests
+python-dotenv
+pydantic
+streamlit
+watchdog
+aiohttp
