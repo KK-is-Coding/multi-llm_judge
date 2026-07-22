@@ -22,7 +22,7 @@ An intelligent orchestration system that queries multiple LLMs in parallel, uses
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/Shivampal7405/Multi-LLM_JUDGE.git
+git clone https://github.com/KK-is-Coding/multi-llm_judge.git
 cd Multi-LLM_JUDGE
 ```
 
@@ -234,8 +234,7 @@ This project is open source and available under the MIT License.
 
 ## 🔗 Links
 
-- **Repository**: [github.com/Shivampal7405/Multi-LLM_JUDGE](https://github.com/Shivampal7405/Multi-LLM_JUDGE)
-- **Issues**: [Report a bug](https://github.com/Shivampal7405/Multi-LLM_JUDGE/issues)
+- **Repository**: [github.com/Shivampal7405/Multi-LLM_JUDGE](https://github.com/KK-is-Coding/multi-llm_judge.git)
 
 ## 📧 Support
 
