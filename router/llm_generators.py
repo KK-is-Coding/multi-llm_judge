@@ -191,7 +191,7 @@ async def generate_groq(prompt: str, system_prompt: str = SYSTEM_PROMPT) -> str:
         return f"Error Groq: {str(e)}"
 
 async def generate_ollama(prompt: str, system_prompt: str = SYSTEM_PROMPT, model_name: str = "deepseek-r1:1.5b") -> str:
-    # Using deepseek-r1 as requested (or a placeholder if not installed)
+    # Use deepseek-r1 (or a placeholder if not installed)
     try:
         async with aiohttp.ClientSession() as session:
             payload = {
@@ -213,7 +213,7 @@ async def generate_all(prompt: str, system_prompt: str = SYSTEM_PROMPT) -> dict:
     """
     Calls all configured generators in parallel.
     """
-    # Define tasks
+    # Defining tasks
     tasks = {
         "Gemini": generate_gemini(prompt, system_prompt),
         "ChatGPT": generate_chatgpt(prompt, system_prompt),
@@ -221,7 +221,7 @@ async def generate_all(prompt: str, system_prompt: str = SYSTEM_PROMPT) -> dict:
         "Ollama": generate_ollama(prompt, system_prompt, model_name="deepseek-r1:1.5b") # Ensure this model matches user's local setup
     }
     
-    # Execute
+    # Executing
     results = await asyncio.gather(*tasks.values())
     
     return dict(zip(tasks.keys(), results))
