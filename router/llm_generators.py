@@ -1,4 +1,5 @@
 import os
+import re
 import asyncio
 import aiohttp
 from dotenv import load_dotenv
@@ -70,53 +71,98 @@ gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 openai_client = AsyncOpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 groq_client = AsyncGroq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 
-async def generate_gemini(prompt: str, system_prompt: str = SYSTEM_PROMPT) -> str:
+# Errors worth retrying automatically - transient/capacity issues, not real failures.
+_RETRYABLE_MARKERS = ("429", "resource_exhausted", "503", "unavailable", "overloaded")
+
+
+def _is_retryable_error(e: Exception) -> bool:
+    text = str(e).lower()
+    return any(marker in text for marker in _RETRYABLE_MARKERS)
+
+
+def _extract_retry_delay_seconds(e: Exception, default: float) -> float:
+    """Best-effort parse of Google's suggested retry delay (e.g. 'Please retry in 276.973781ms.'
+    or a RetryInfo block like 'retryDelay': '12s')."""
+    text = str(e)
+
+    match = re.search(r"retry in ([\d.]+)ms", text, re.IGNORECASE)
+    if match:
+        return max(float(match.group(1)) / 1000.0, 0.5)
+
+    match = re.search(r"['\"]?retryDelay['\"]?\s*:\s*['\"]?([\d.]+)s", text, re.IGNORECASE)
+    if match:
+        return max(float(match.group(1)), 0.5)
+
+    return default
+
+
+async def generate_gemini(prompt: str, system_prompt: str = SYSTEM_PROMPT, max_retries: int = 3) -> str:
     if not gemini_client:
         return "Error: Gemini API Key missing"
-    try:
-        config = types.GenerateContentConfig(system_instruction=system_prompt) if system_prompt else None
-        response = await gemini_client.aio.models.generate_content(
-            model="gemini-flash-latest",
-            contents=prompt,
-            config=config
-        )
 
-        text = response.text
+    config = types.GenerateContentConfig(system_instruction=system_prompt) if system_prompt else None
 
-        if text and text.strip():
-            return text
+    attempt = 0
+    last_error = None
 
-        # response.text was None/empty - dig into WHY so it's not a silent
-        # "Expecting value: line 1 column 1 (char 0)" downstream.
-        reason_parts = []
+    while attempt <= max_retries:
+        try:
+            response = await gemini_client.aio.models.generate_content(
+                model="gemini-flash-latest",
+                contents=prompt,
+                config=config
+            )
 
-        prompt_feedback = getattr(response, "prompt_feedback", None)
-        if prompt_feedback is not None:
-            block_reason = getattr(prompt_feedback, "block_reason", None)
-            if block_reason:
-                reason_parts.append(f"prompt blocked ({block_reason})")
+            text = response.text
 
-        candidates = getattr(response, "candidates", None) or []
-        for i, cand in enumerate(candidates):
-            finish_reason = getattr(cand, "finish_reason", None)
-            safety_ratings = getattr(cand, "safety_ratings", None)
-            detail = f"candidate[{i}] finish_reason={finish_reason}"
-            if safety_ratings:
-                flagged = [r for r in safety_ratings if getattr(r, "blocked", False)]
-                if flagged:
-                    detail += f" blocked_categories={[getattr(r, 'category', '?') for r in flagged]}"
-            reason_parts.append(detail)
+            if text and text.strip():
+                return text
 
-        if not reason_parts:
-            reason_parts.append("no candidates returned and no prompt_feedback available")
+            # response.text was None/empty - dig into WHY so it's not a silent
+            # "Expecting value: line 1 column 1 (char 0)" downstream.
+            reason_parts = []
 
-        diagnostic = "; ".join(reason_parts)
-        print(f"[generate_gemini] Empty text response. Diagnostics: {diagnostic}")
-        return f"Error Gemini: empty response ({diagnostic})"
+            prompt_feedback = getattr(response, "prompt_feedback", None)
+            if prompt_feedback is not None:
+                block_reason = getattr(prompt_feedback, "block_reason", None)
+                if block_reason:
+                    reason_parts.append(f"prompt blocked ({block_reason})")
 
-    except Exception as e:
-        print(f"[generate_gemini] Exception: {type(e).__name__}: {e}")
-        return f"Error Gemini: {str(e)}"
+            candidates = getattr(response, "candidates", None) or []
+            for i, cand in enumerate(candidates):
+                finish_reason = getattr(cand, "finish_reason", None)
+                safety_ratings = getattr(cand, "safety_ratings", None)
+                detail = f"candidate[{i}] finish_reason={finish_reason}"
+                if safety_ratings:
+                    flagged = [r for r in safety_ratings if getattr(r, "blocked", False)]
+                    if flagged:
+                        detail += f" blocked_categories={[getattr(r, 'category', '?') for r in flagged]}"
+                reason_parts.append(detail)
+
+            if not reason_parts:
+                reason_parts.append("no candidates returned and no prompt_feedback available")
+
+            diagnostic = "; ".join(reason_parts)
+            print(f"[generate_gemini] Empty text response. Diagnostics: {diagnostic}")
+            return f"Error Gemini: empty response ({diagnostic})"
+
+        except Exception as e:
+            last_error = e
+
+            if _is_retryable_error(e) and attempt < max_retries:
+                delay = _extract_retry_delay_seconds(e, default=2 ** attempt)
+                print(f"[generate_gemini] Transient error (attempt {attempt + 1}/{max_retries}): "
+                      f"{type(e).__name__}: {e}")
+                print(f"[generate_gemini] Retrying in {delay:.1f}s...")
+                await asyncio.sleep(delay)
+                attempt += 1
+                continue
+
+            print(f"[generate_gemini] Exception: {type(e).__name__}: {e}")
+            return f"Error Gemini: {str(e)}"
+
+    print(f"[generate_gemini] Exhausted {max_retries} retries. Last error: {last_error}")
+    return f"Error Gemini: {str(last_error)}"
 
 async def generate_chatgpt(prompt: str, system_prompt: str = SYSTEM_PROMPT) -> str:
     if not openai_client:
@@ -138,7 +184,7 @@ async def generate_groq(prompt: str, system_prompt: str = SYSTEM_PROMPT) -> str:
         messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt}]
         chat_completion = await groq_client.chat.completions.create(
             messages=messages,
-            model="llama-3.3-70b-versatile", # Updated to a likely available model
+            model="llama-3.3-70b-versatile", # Update it to a likely available model
         )
         return chat_completion.choices[0].message.content
     except Exception as e:
